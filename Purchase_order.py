@@ -10,14 +10,12 @@ SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]
 SLACK_USER_ID = os.environ["SLACK_USER_ID"]
 
 # Notion 字段名（按你自己的表来，有差异可以用 env 覆盖）
-# 下面这些是“默认值”，你可以在 workflow 里通过 env 改掉
 NOTION_TITLE_PROPERTY = os.getenv("NOTION_TITLE_PROPERTY", "Product Name")   # 商品名
 NOTION_DESCRIPTION_PROPERTY = os.getenv("NOTION_DESCRIPTION_PROPERTY", "Notes")  # 备注
 NOTION_NOTIFIED_PROPERTY = os.getenv("NOTION_NOTIFIED_PROPERTY", "Notified")    # Checkbox
 NOTION_STATUS_PROPERTY = os.getenv("NOTION_STATUS_PROPERTY", "Status")          # 状态列
 NOTION_STATUS_TARGET = os.getenv("NOTION_STATUS_TARGET", "Requesting")          # 目标状态
 
-# 新增：数量 / 申请人 / 预期价格
 NOTION_QUANTITY_PROPERTY = os.getenv("NOTION_QUANTITY_PROPERTY", "Quantity")
 NOTION_APPLICANT_PROPERTY = os.getenv("NOTION_APPLICANT_PROPERTY", "Applicant")
 NOTION_EXPECTED_PRICE_PROPERTY = os.getenv("NOTION_EXPECTED_PRICE_PROPERTY", "Expected Price")
@@ -43,30 +41,19 @@ SLACK_HEADERS = {
 #          Notion 部分
 # ============================
 
-def fetch_requesting_unnotified_pages():
+def fetch_unnotified_pages():
     """
-    从 Notion 数据库中查找：
-      - Status == NOTION_STATUS_TARGET
+    只从 Notion 数据库中查：
       - Notified == False
-    的所有记录。
-    用户只要把 Status 改成 Requesting，就会在下次遍历时被捞出来。
+    然后在 Python 里再根据 Status == NOTION_STATUS_TARGET 过滤。
+    这样避免使用 Notion 的 status filter，绕过 400 问题。
     """
     payload = {
         "filter": {
-            "and": [
-                {
-                    "property": NOTION_STATUS_PROPERTY,
-                    "status": {
-                        "equals": NOTION_STATUS_TARGET
-                    }
-                },
-                {
-                    "property": NOTION_NOTIFIED_PROPERTY,
-                    "checkbox": {
-                        "equals": False
-                    }
-                }
-            ]
+            "property": NOTION_NOTIFIED_PROPERTY,
+            "checkbox": {
+                "equals": False
+            }
         },
         "sorts": [
             {
@@ -86,7 +73,11 @@ def fetch_requesting_unnotified_pages():
             payload["start_cursor"] = next_cursor
 
         resp = requests.post(NOTION_QUERY_URL, headers=NOTION_HEADERS, json=payload)
-        resp.raise_for_status()
+
+        if not resp.ok:
+            print("[ERROR] Notion API returned:", resp.status_code, resp.text)
+            resp.raise_for_status()
+
         data = resp.json()
 
         results.extend(data.get("results", []))
@@ -94,6 +85,18 @@ def fetch_requesting_unnotified_pages():
         next_cursor = data.get("next_cursor")
 
     return results
+
+
+def get_status_name(page: dict) -> str | None:
+    """从 Status 属性里取当前状态名"""
+    props = page.get("properties", {})
+    s_prop = props.get(NOTION_STATUS_PROPERTY)
+    if not s_prop:
+        return None
+    status = s_prop.get("status")
+    if not status:
+        return None
+    return status.get("name")
 
 
 def extract_title(page: dict) -> str:
@@ -130,7 +133,6 @@ def extract_quantity(page: dict) -> str:
     q_prop = props.get(NOTION_QUANTITY_PROPERTY)
     if not q_prop:
         return "-"
-    # 数值类型：Notion API 里一般是 {"number": 3}
     value = q_prop.get("number")
     if value is None:
         return "-"
@@ -146,7 +148,6 @@ def extract_expected_price(page: dict) -> str:
     value = p_prop.get("number")
     if value is None:
         return "-"
-    # 这里简单转成字符串，如果你想加货币符号，可以在这里改
     return str(value)
 
 
@@ -161,14 +162,12 @@ def extract_applicant(page: dict) -> str:
     if not people:
         return "-"
 
-    # 多人时用逗号拼
     names = []
     for p in people:
         name = p.get("name")
         if name:
             names.append(name)
         else:
-            # 兜底用邮箱
             person = p.get("person") or {}
             email = person.get("email")
             if email:
@@ -217,9 +216,18 @@ def send_slack_message(text: str):
 # ============================
 
 def main():
-    print(f"[INFO] 查询 Status == '{NOTION_STATUS_TARGET}' 且 Notified == false 的记录...")
-    pages = fetch_requesting_unnotified_pages()
-    print(f"[INFO] 找到 {len(pages)} 条需要通知的项目。")
+    print(f"[INFO] 查询 Notified == false 的记录，然后在代码里过滤 Status == '{NOTION_STATUS_TARGET}' ...")
+    all_unnotified = fetch_unnotified_pages()
+    print(f"[INFO] Notified=false 的记录总数: {len(all_unnotified)}")
+
+    # 在 Python 里再按 Status 过滤
+    pages = []
+    for page in all_unnotified:
+        status_name = get_status_name(page)
+        if status_name == NOTION_STATUS_TARGET:
+            pages.append(page)
+
+    print(f"[INFO] 其中 Status == '{NOTION_STATUS_TARGET}' 的记录数量: {len(pages)}")
 
     if not pages:
         print("[INFO] 没有需要通知的项目。")
@@ -236,23 +244,26 @@ def main():
         description = extract_description(page)
         url = build_page_url(page_id)
 
-        # 拼装 Slack 消息：Product → Quantity → Applicant → Expected Price → Notes
         if description:
             message = (
-                f"📦 New Order Request（Status: {NOTION_STATUS_TARGET}）：\n"
+                f"📦 新的采购请求（Status: {NOTION_STATUS_TARGET}）：\n"
                 f"- Product: {title}\n"
                 f"- Quantity: {quantity}\n"
                 f"- Applicant: {applicant}\n"
                 f"- Expected Price: {expected_price}\n"
                 f"- Notes: {description}\n"
+                f"- Link: {url}\n"
+                f"- Last Edited: {last_edited_time}"
             )
         else:
             message = (
-                f"📦 New Order Request（Status: {NOTION_STATUS_TARGET}）：\n"
+                f"📦 新的采购请求（Status: {NOTION_STATUS_TARGET}）：\n"
                 f"- Product: {title}\n"
                 f"- Quantity: {quantity}\n"
                 f"- Applicant: {applicant}\n"
                 f"- Expected Price: {expected_price}\n"
+                f"- Link: {url}\n"
+                f"- Last Edited: {last_edited_time}"
             )
 
         print(f"[INFO] 发送 Slack 消息：{title}")
