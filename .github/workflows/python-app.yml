@@ -42,4 +42,4 @@ jobs:
           # 目标状态：当 Status == Requesting 时触发提醒
           NOTION_STATUS_TARGET: "Requesting"
         run: |
-          python notion_to_slack.py
+          python Purchase_order.py
