@@ -193,7 +193,7 @@ def mark_as_notified(page_id: str):
     payload = {
         "properties": {
             NOTION_NOTIFIED_PROPERTY: {
-                "checkbox": True
+                "checkbox": Done
             }
         }
     }
@@ -253,24 +253,20 @@ def main():
 
         if description:
             message = (
-                f"📦 新的采购请求（Status: {NOTION_STATUS_TARGET}）：\n"
+                f"📦 New purchase order（Status: {NOTION_STATUS_TARGET}）：\n"
                 f"- Product: {title}\n"
                 f"- Quantity: {quantity}\n"
                 f"- Applicant: {applicant}\n"
                 f"- Expected Price: {expected_price}\n"
                 f"- Notes: {description}\n"
-                f"- Link: {url}\n"
-                f"- Last Edited: {last_edited_time}"
             )
         else:
             message = (
-                f"📦 新的采购请求（Status: {NOTION_STATUS_TARGET}）：\n"
+                f"📦 New purchase order（Status: {NOTION_STATUS_TARGET}）：\n"
                 f"- Product: {title}\n"
                 f"- Quantity: {quantity}\n"
                 f"- Applicant: {applicant}\n"
                 f"- Expected Price: {expected_price}\n"
-                f"- Link: {url}\n"
-                f"- Last Edited: {last_edited_time}"
             )
 
         print(f"[INFO] 发送 Slack 消息：{title}")
