@@ -80,10 +80,10 @@ def get_status_name(page: dict):
 
 def get_notified_flag(page: dict) -> bool:
     """Notified 为 checkbox：True 表示已通知"""
-    prop = page["properties"].get(NION_NOTIFIED_PROPERTY)
+    prop = page["properties"].get(NOTION_NOTIFIED_PROPERTY)
     if not prop:
         return False
-    # checkbox 字段结构：{"checkbox": true/false}
+    # ✅ checkbox 字段结构：{"checkbox": true/false}
     return bool(prop.get("checkbox", False))
 
 
@@ -133,27 +133,17 @@ def build_page_url(page_id: str) -> str:
     return f"https://www.notion.so/{clean_id}"
 
 
-def build_database_url() -> str:
-    """返回数据库主页 URL（默认视图）"""
-    clean_id = NOTION_DATABASE_ID.replace("-", "")
-    # 如果你有带 ?v=xxx 的完整 URL，也可以直接用环境变量传进来
-    return f"https://www.notion.so/{clean_id}"
-
-
 def mark_as_notified(page_id: str):
     """把 Notified (checkbox) 勾上 True"""
-    # ✅ 必须带上 page_id
-    url = f"{NOTION_PAGE_URL}/{page_id}"
+    url = f"{NOTION_PAGE_URL}"
     payload = {
         "properties": {
             NOTION_NOTIFIED_PROPERTY: {
-                "checkbox": True
+                "checkbox": True      # ✅ 现在用 checkbox
             }
         }
     }
     resp = requests.patch(url, headers=NOTION_HEADERS, json=payload)
-    # 方便排错，你也可以打印一下 resp.text
-    # print(resp.status_code, resp.text)
     resp.raise_for_status()
 
 
@@ -161,7 +151,7 @@ def mark_as_notified(page_id: str):
 #          Slack 部分
 # ============================
 def send_slack_message(text: str, url: str):
-    """发送带一个按钮的消息，按钮打开数据库主页"""
+    """发送带一个按钮的消息，按钮打开当前记录"""
     payload = {
         "channel": SLACK_USER_ID,
         "text": text,
@@ -175,7 +165,7 @@ def send_slack_message(text: str, url: str):
                 "elements": [
                     {
                         "type": "button",
-                        "text": {"type": "plain_text", "text": "打开 Notion 表格"},
+                        "text": {"type": "plain_text", "text": "在 Notion 中查看"},
                         "url": url
                     }
                 ]
@@ -183,7 +173,6 @@ def send_slack_message(text: str, url: str):
         ]
     }
     resp = requests.post(SLACK_API_URL, headers=SLACK_HEADERS, json=payload)
-    # print(resp.status_code, resp.text)  # 调试时可以打开
     resp.raise_for_status()
 
 
@@ -205,8 +194,6 @@ def main():
         print("[INFO] 没有需要通知的项目。")
         return
 
-    db_url = build_database_url()  # ✅ 用数据库主页链接
-
     for page in pages:
         page_id = page["id"]
 
@@ -215,21 +202,20 @@ def main():
         applicant = extract_applicant(page)
         expected_price = extract_expected_price(page)
         description = extract_description(page)
-        # page_url = build_page_url(page_id)  # 如果以后需要单条链接，可以用这个
+        url = build_page_url(page_id)
 
         message = (
-            f"👋 Dear Prof. Matsuzaka,\n"
-            f"📦 You received an order request from {applicant}.\n\n"
-            f"- Product: {title}\n"
-            f"- Quantity: {quantity}\n"
-            f"- Expected Price: {expected_price}\n"
+        f"👋Dear Prof. Matsuzaka,\n"
+        f"📦You received an order request from {applicant}.\n\n"
+        f"- Product: {title}\n"
+        f"- Quantity: {quantity}\n"
+        f"- Expected Price: {expected_price}\n"
         )
         if description:
             message += f"- Notes: {description}\n"
 
         print(f"[INFO] 发送 Slack 消息: {title}")
-        # ✅ 按钮打开数据库主页
-        send_slack_message(message, db_url)
+        send_slack_message(message, url)
 
         print(f"[INFO] 标记 Notified=True: {page_id}")
         mark_as_notified(page_id)
