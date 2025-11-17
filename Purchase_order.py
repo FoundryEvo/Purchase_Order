@@ -173,7 +173,7 @@ def send_slack_message(text: str, url: str):
                 "elements": [
                     {
                         "type": "button",
-                        "text": {"type": "plain_text", "text": "打开 Notion 表格"},
+                        "text": {"type": "plain_text", "text": "See Details"},
                         "url": url
                     }
                 ]
