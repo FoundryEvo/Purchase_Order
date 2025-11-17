@@ -205,13 +205,12 @@ def main():
         url = build_page_url(page_id)
 
         message = (
-            f"📦 New purchase order（Status: {NOTION_STATUS_TARGET}）：\n"
-            f"- Product: {title}\n"
-            f"- Quantity: {quantity}\n"
-            f"- Applicant: {applicant}\n"
-            f"- Expected Price: {expected_price}\n"
+        f"👋Dear Prof. Matsuzaka,\n"
+        f"📦You received an order request from {applicant}.\n\n"
+        f"- Product: {title}\n"
+        f"- Quantity: {quantity}\n"
+        f"- Expected Price: {expected_price}\n"
         )
-
         if description:
             message += f"- Notes: {description}\n"
 
