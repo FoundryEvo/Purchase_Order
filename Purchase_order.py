@@ -135,9 +135,7 @@ def build_page_url(page_id: str) -> str:
 
 def build_database_url() -> str:
     """返回数据库主页 URL（默认视图）"""
-    clean_id = NOTION_DATABASE_ID.replace("-", "")
-    # 如果你有带 ?v=xxx 的完整 URL，也可以直接用环境变量传进来
-    return f"https://www.notion.so/{clean_id}"
+    return f"https://www.notion.so/213756632df1800b870def0eb8ed4318?v=213756632df180aa87b5000ca6013019"
 
 
 def mark_as_notified(page_id: str):
