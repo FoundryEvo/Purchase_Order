@@ -11,8 +11,8 @@ SLACK_USER_ID = os.environ["SLACK_USER_ID"]
 
 NOTION_TITLE_PROPERTY = os.getenv("NOTION_TITLE_PROPERTY", "Product Name")
 NOTION_DESCRIPTION_PROPERTY = os.getenv("NOTION_DESCRIPTION_PROPERTY", "Notes")
-NOTION_NOTIFIED_PROPERTY = os.getenv("NOTION_NOTIFIED_PROPERTY", "Notified")
-NOTION_STATUS_PROPERTY = os.getenv("NOTION_STATUS_PROPERTY", "Status")
+NOTION_NOTIFIED_PROPERTY = os.getenv("NOTION_NOTIFIED_PROPERTY", "Notified")  # ✅ checkbox
+NOTION_STATUS_PROPERTY = os.getenv("NOTION_STATUS_PROPERTY", "Status")        # ✅ status
 NOTION_STATUS_TARGET = os.getenv("NOTION_STATUS_TARGET", "Requesting")
 
 NOTION_QUANTITY_PROPERTY = os.getenv("NOTION_QUANTITY_PROPERTY", "Quantity")
@@ -79,15 +79,12 @@ def get_status_name(page: dict):
 
 
 def get_notified_flag(page: dict) -> bool:
+    """Notified 为 checkbox：True 表示已通知"""
     prop = page["properties"].get(NOTION_NOTIFIED_PROPERTY)
     if not prop:
         return False
-
-    status = prop.get("status")
-    if not status:
-        return False
-
-    return status.get("name") == "Done"
+    # ✅ checkbox 字段结构：{"checkbox": true/false}
+    return bool(prop.get("checkbox", False))
 
 
 def extract_title(page: dict) -> str:
@@ -137,13 +134,12 @@ def build_page_url(page_id: str) -> str:
 
 
 def mark_as_notified(page_id: str):
+    """把 Notified (checkbox) 勾上 True"""
     url = f"{NOTION_PAGE_URL}/{page_id}"
     payload = {
         "properties": {
             NOTION_NOTIFIED_PROPERTY: {
-                "status": {
-                    "name": "Done"
-                }
+                "checkbox": True      # ✅ 现在用 checkbox
             }
         }
     }
@@ -155,6 +151,7 @@ def mark_as_notified(page_id: str):
 #          Slack 部分
 # ============================
 def send_slack_message(text: str, url: str):
+    """发送带一个按钮的消息，按钮打开当前记录"""
     payload = {
         "channel": SLACK_USER_ID,
         "text": text,
@@ -192,7 +189,7 @@ def main():
         if get_status_name(page) == NOTION_STATUS_TARGET and not get_notified_flag(page):
             pages.append(page)
 
-    print(f"[INFO] 符合条件的记录数: {len(pages)}")
+    print(f"[INFO] 符合条件( Status='{NOTION_STATUS_TARGET}', Notified=false ) 的记录数: {len(pages)}")
     if not pages:
         print("[INFO] 没有需要通知的项目。")
         return
@@ -221,10 +218,10 @@ def main():
         print(f"[INFO] 发送 Slack 消息: {title}")
         send_slack_message(message, url)
 
-        print(f"[INFO] 标记 Notified = Done: {page_id}")
+        print(f"[INFO] 标记 Notified=True: {page_id}")
         mark_as_notified(page_id)
 
-    print("[INFO] 已全部处理完毕。")
+    print("[INFO] 所有需要通知的项目已处理完毕。")
 
 
 if __name__ == "__main__":
