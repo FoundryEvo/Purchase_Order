@@ -20,12 +20,14 @@ NOTION_QUANTITY_PROPERTY = os.getenv("NOTION_QUANTITY_PROPERTY", "Quantity")
 NOTION_APPLICANT_PROPERTY = os.getenv("NOTION_APPLICANT_PROPERTY", "Applicant")
 NOTION_EXPECTED_PRICE_PROPERTY = os.getenv("NOTION_EXPECTED_PRICE_PROPERTY", "Expected Price")
 
-# Notion API
+# ============================
+#  Notion API（旧版 2022-06-28）
+# ============================
 NOTION_QUERY_URL = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
 NOTION_PAGE_URL = "https://api.notion.com/v1/pages"
 NOTION_HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
-    "Notion-Version": "2022-06-28",
+    "Notion-Version": "2022-06-28",   # ✅ 固定旧版本
     "Content-Type": "application/json",
 }
 
@@ -41,20 +43,15 @@ SLACK_HEADERS = {
 #          Notion 部分
 # ============================
 
-def fetch_unnotified_pages():
+def fetch_all_pages():
     """
-    只从 Notion 数据库中查：
-      - Notified == False
-    然后在 Python 里再根据 Status == NOTION_STATUS_TARGET 过滤。
-    这样避免使用 Notion 的 status filter，绕过 400 问题。
+    使用旧版数据库查询接口：
+      POST /v1/databases/{database_id}/query
+
+    不带 filter，按 last_edited_time 排序取回所有页面。
+    之后在 Python 里按 Status / Notified 过滤，避免各种类型不匹配。
     """
     payload = {
-        "filter": {
-            "property": NOTION_NOTIFIED_PROPERTY,
-            "checkbox": {
-                "equals": False
-            }
-        },
         "sorts": [
             {
                 "timestamp": "last_edited_time",
@@ -75,11 +72,10 @@ def fetch_unnotified_pages():
         resp = requests.post(NOTION_QUERY_URL, headers=NOTION_HEADERS, json=payload)
 
         if not resp.ok:
-            print("[ERROR] Notion API returned:", resp.status_code, resp.text)
+            print("Error:  Notion API returned:", resp.status_code, resp.text)
             resp.raise_for_status()
 
         data = resp.json()
-
         results.extend(data.get("results", []))
         has_more = data.get("has_more", False)
         next_cursor = data.get("next_cursor")
@@ -87,7 +83,7 @@ def fetch_unnotified_pages():
     return results
 
 
-def get_status_name(page: dict) -> str | None:
+def get_status_name(page: dict):
     """从 Status 属性里取当前状态名"""
     props = page.get("properties", {})
     s_prop = props.get(NOTION_STATUS_PROPERTY)
@@ -97,6 +93,16 @@ def get_status_name(page: dict) -> str | None:
     if not status:
         return None
     return status.get("name")
+
+
+def get_notified_flag(page: dict) -> bool:
+    """从 Notified 属性里取 checkbox 布尔值"""
+    props = page.get("properties", {})
+    n_prop = props.get(NOTION_NOTIFIED_PROPERTY)
+    if not n_prop:
+        return False
+    # checkbox 类型字段格式：{"checkbox": true/false}
+    return bool(n_prop.get("checkbox", False))
 
 
 def extract_title(page: dict) -> str:
@@ -216,18 +222,19 @@ def send_slack_message(text: str):
 # ============================
 
 def main():
-    print(f"[INFO] 查询 Notified == false 的记录，然后在代码里过滤 Status == '{NOTION_STATUS_TARGET}' ...")
-    all_unnotified = fetch_unnotified_pages()
-    print(f"[INFO] Notified=false 的记录总数: {len(all_unnotified)}")
+    print(f"[INFO] 拉取数据库全部页面，然后在本地过滤 Status == '{NOTION_STATUS_TARGET}' 且 Notified == false ...")
+    all_pages = fetch_all_pages()
+    print(f"[INFO] 数据库总记录数: {len(all_pages)}")
 
-    # 在 Python 里再按 Status 过滤
+    # 本地过滤：Status == Requesting 且 Notified == False
     pages = []
-    for page in all_unnotified:
+    for page in all_pages:
         status_name = get_status_name(page)
-        if status_name == NOTION_STATUS_TARGET:
+        notified = get_notified_flag(page)
+        if status_name == NOTION_STATUS_TARGET and not notified:
             pages.append(page)
 
-    print(f"[INFO] 其中 Status == '{NOTION_STATUS_TARGET}' 的记录数量: {len(pages)}")
+    print(f"[INFO] 满足条件( Status='{NOTION_STATUS_TARGET}', Notified=false ) 的记录数: {len(pages)}")
 
     if not pages:
         print("[INFO] 没有需要通知的项目。")
