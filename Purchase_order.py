@@ -193,7 +193,7 @@ def mark_as_notified(page_id: str):
     payload = {
         "properties": {
             NOTION_NOTIFIED_PROPERTY: {
-                "checkbox": Done
+                "checkbox": True
             }
         }
     }
