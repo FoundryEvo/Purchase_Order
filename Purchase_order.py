@@ -135,7 +135,7 @@ def build_page_url(page_id: str) -> str:
 
 def mark_as_notified(page_id: str):
     """把 Notified (checkbox) 勾上 True"""
-    url = f"{NOTION_PAGE_URL}/{page_id}"
+    url = f"{NOTION_PAGE_URL}"
     payload = {
         "properties": {
             NOTION_NOTIFIED_PROPERTY: {
