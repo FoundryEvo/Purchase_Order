@@ -1,8 +1,5 @@
 import os
 import requests
-import smtplib
-from email.mime.text import MIMEText
-from email.header import Header
 
 # ============================
 #  1. 从环境变量读配置
@@ -14,13 +11,6 @@ NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
 # Slack 配置
 SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]
 SLACK_USER_ID = os.environ["SLACK_USER_ID"]
-
-# 邮件配置 (新增)
-EMAIL_SENDER = os.environ["EMAIL_SENDER"]        # 发件人邮箱 (如: example@gmail.com)
-EMAIL_PASSWORD = os.environ["EMAIL_PASSWORD"]    # 邮箱授权码 (不是登录密码)
-EMAIL_RECEIVER = os.environ["EMAIL_RECEIVER"]    # 目标收件邮箱
-SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com") 
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 
 # Notion 属性名配置
 NOTION_TITLE_PROPERTY = os.getenv("NOTION_TITLE_PROPERTY", "Product Name")
@@ -116,7 +106,7 @@ def mark_as_notified(page_id: str):
     resp.raise_for_status()
 
 # ============================
-#  3. 通知逻辑部分 (Slack & Email)
+#  3. 通知逻辑部分 (仅 Slack)
 # ============================
 def send_slack_message(text: str, url: str):
     payload = {
@@ -138,24 +128,6 @@ def send_slack_message(text: str, url: str):
     }
     resp = requests.post(SLACK_API_URL, headers=SLACK_HEADERS, json=payload)
     resp.raise_for_status()
-
-def send_email_notification(subject: str, content: str):
-    """通过 SMTP 服务发送邮件"""
-    msg = MIMEText(content, 'plain', 'utf-8')
-    msg['From'] = EMAIL_SENDER
-    msg['To'] = EMAIL_RECEIVER
-    msg['Subject'] = Header(subject, 'utf-8')
-
-    try:
-        # 使用 TLS 加密连接
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls() 
-        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-        server.sendmail(EMAIL_SENDER, [EMAIL_RECEIVER], msg.as_string())
-        server.quit()
-        print(f"[SUCCESS] 邮件已发送至: {EMAIL_RECEIVER}")
-    except Exception as e:
-        print(f"[ERROR] 邮件发送失败: {str(e)}")
 
 # ============================
 #  4. 主程序
@@ -184,7 +156,7 @@ def main():
         expected_price = extract_expected_price(page)
         description = extract_description(page)
 
-        # 构建统一的消息文本
+        # 构建 Slack 消息文本
         message_body = (
             f"👋 Dear Prof. Matsuzaka,\n"
             f"📦 You received a new order request from {applicant}.\n\n"
@@ -195,16 +167,11 @@ def main():
         if description:
             message_body += f"- Notes: {description}\n"
         
-        # 1. 发送 Slack
+        # 发送 Slack 通知
         print(f"[INFO] 正在通知 Slack: {title}")
         send_slack_message(message_body, db_url)
 
-        # 2. 发送 邮件
-        print(f"[INFO] 正在通知 邮件: {title}")
-        email_title = f"Order Request Notification: {title}"
-        send_email_notification(email_title, message_body)
-
-        # 3. 回写 Notion
+        # 回写 Notion，标记为已通知
         print(f"[INFO] 正在标记 Notion 状态...")
         mark_as_notified(page_id)
 
