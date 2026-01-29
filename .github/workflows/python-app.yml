@@ -1,8 +1,8 @@
-name: Notion → Slack Purchase Request Notifier
+name: Notion → Slack & Email Purchase Request Notifier
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # 每 10 分钟执行一次（UTC 时间）
+    - cron: "*/10 * * * *"   # 每 10 分钟执行一次
   workflow_dispatch:          # 支持手动触发
 
 jobs:
@@ -22,15 +22,22 @@ jobs:
         run: |
           pip install requests
 
-      - name: Run Notion to Slack notifier
+      - name: Run Notion to Slack and Email notifier
         env:
-          # 必填：从 GitHub Secrets 中安全读取
+          # --- 基础配置 ---
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_USER_ID: ${{ secrets.SLACK_USER_ID }}
 
-          # 可选：如果你的列名和下面不同，请修改这些值
+          # --- ✅ 新增：邮件配置 (必须添加这 5 行) ---
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECEIVER: ${{ secrets.EMAIL_RECEIVER }}
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+
+          # --- Notion 属性配置 ---
           NOTION_TITLE_PROPERTY: "Product Name"
           NOTION_QUANTITY_PROPERTY: "Quantity"
           NOTION_APPLICANT_PROPERTY: "Applicant"
@@ -38,8 +45,7 @@ jobs:
           NOTION_DESCRIPTION_PROPERTY: "Notes"
           NOTION_STATUS_PROPERTY: "Status"
           NOTION_NOTIFIED_PROPERTY: "Notified"
-
-          # 目标状态：当 Status == Requesting 时触发提醒
           NOTION_STATUS_TARGET: "Requesting"
+          
         run: |
           python Purchase_order.py
