@@ -1,27 +1,39 @@
 import os
 import requests
+import smtplib
+from email.mime.text import MIMEText
+from email.header import Header
 
 # ============================
-#  从环境变量读配置
+#  1. 从环境变量读配置
 # ============================
+# Notion 配置
 NOTION_TOKEN = os.environ["NOTION_TOKEN"]
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
+
+# Slack 配置
 SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]
 SLACK_USER_ID = os.environ["SLACK_USER_ID"]
 
+# 邮件配置 (新增)
+EMAIL_SENDER = os.environ["EMAIL_SENDER"]        # 发件人邮箱 (如: example@gmail.com)
+EMAIL_PASSWORD = os.environ["EMAIL_PASSWORD"]    # 邮箱授权码 (不是登录密码)
+EMAIL_RECEIVER = os.environ["EMAIL_RECEIVER"]    # 目标收件邮箱
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com") 
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+
+# Notion 属性名配置
 NOTION_TITLE_PROPERTY = os.getenv("NOTION_TITLE_PROPERTY", "Product Name")
 NOTION_DESCRIPTION_PROPERTY = os.getenv("NOTION_DESCRIPTION_PROPERTY", "Notes")
-NOTION_NOTIFIED_PROPERTY = os.getenv("NOTION_NOTIFIED_PROPERTY", "Notified")  # ✅ checkbox
-NOTION_STATUS_PROPERTY = os.getenv("NOTION_STATUS_PROPERTY", "Status")        # ✅ status
+NOTION_NOTIFIED_PROPERTY = os.getenv("NOTION_NOTIFIED_PROPERTY", "Notified")  # Checkbox
+NOTION_STATUS_PROPERTY = os.getenv("NOTION_STATUS_PROPERTY", "Status")        # Status
 NOTION_STATUS_TARGET = os.getenv("NOTION_STATUS_TARGET", "Requesting")
 
 NOTION_QUANTITY_PROPERTY = os.getenv("NOTION_QUANTITY_PROPERTY", "Quantity")
 NOTION_APPLICANT_PROPERTY = os.getenv("NOTION_APPLICANT_PROPERTY", "Applicant")
 NOTION_EXPECTED_PRICE_PROPERTY = os.getenv("NOTION_EXPECTED_PRICE_PROPERTY", "Expected Price")
 
-# ============================
-#  Notion API
-# ============================
+# API URL
 NOTION_QUERY_URL = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
 NOTION_PAGE_URL = "https://api.notion.com/v1/pages"
 NOTION_HEADERS = {
@@ -30,7 +42,6 @@ NOTION_HEADERS = {
     "Content-Type": "application/json",
 }
 
-# Slack API
 SLACK_API_URL = "https://slack.com/api/chat.postMessage"
 SLACK_HEADERS = {
     "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
@@ -38,17 +49,13 @@ SLACK_HEADERS = {
 }
 
 # ============================
-#          Notion 部分
+#  2. Notion 逻辑部分
 # ============================
 def fetch_all_pages():
     payload = {
-        "sorts": [{
-            "timestamp": "last_edited_time",
-            "direction": "ascending"
-        }],
+        "sorts": [{"timestamp": "last_edited_time", "direction": "ascending"}],
         "page_size": 100
     }
-
     results = []
     has_more = True
     next_cursor = None
@@ -56,118 +63,67 @@ def fetch_all_pages():
     while has_more:
         if next_cursor:
             payload["start_cursor"] = next_cursor
-
         resp = requests.post(NOTION_QUERY_URL, headers=NOTION_HEADERS, json=payload)
         resp.raise_for_status()
-
         data = resp.json()
         results.extend(data.get("results", []))
         has_more = data.get("has_more", False)
         next_cursor = data.get("next_cursor")
-
     return results
-
 
 def get_status_name(page: dict):
     prop = page["properties"].get(NOTION_STATUS_PROPERTY)
-    if not prop:
-        return None
-    status = prop.get("status")
-    if not status:
-        return None
-    return status.get("name")
-
+    return prop.get("status", {}).get("name") if prop else None
 
 def get_notified_flag(page: dict) -> bool:
-    """Notified 为 checkbox：True 表示已通知"""
     prop = page["properties"].get(NOTION_NOTIFIED_PROPERTY)
-    if not prop:
-        return False
-    # checkbox 字段结构：{"checkbox": true/false}
-    return bool(prop.get("checkbox", False))
-
+    return bool(prop.get("checkbox", False)) if prop else False
 
 def extract_title(page: dict) -> str:
     try:
         title_items = page["properties"][NOTION_TITLE_PROPERTY]["title"]
-        if not title_items:
-            return "(无标题)"
-        return "".join(t.get("plain_text", "") for t in title_items)
+        return "".join(t.get("plain_text", "") for t in title_items) if title_items else "(无标题)"
     except Exception:
         return "(无标题)"
 
-
 def extract_description(page: dict) -> str:
     prop = page["properties"].get(NOTION_DESCRIPTION_PROPERTY)
-    if not prop:
-        return ""
-    texts = prop.get("rich_text", [])
+    texts = prop.get("rich_text", []) if prop else []
     return "".join(t.get("plain_text", "") for t in texts)
-
 
 def extract_quantity(page: dict) -> str:
     p = page["properties"].get(NOTION_QUANTITY_PROPERTY)
-    if not p or p.get("number") is None:
-        return "-"
-    return str(p["number"])
-
+    return str(p["number"]) if p and p.get("number") is not None else "-"
 
 def extract_expected_price(page: dict) -> str:
     p = page["properties"].get(NOTION_EXPECTED_PRICE_PROPERTY)
-    if not p or p.get("number") is None:
-        return "-"
-    return str(p["number"])
-
+    return str(p["number"]) if p and p.get("number") is not None else "-"
 
 def extract_applicant(page: dict) -> str:
     p = page["properties"].get(NOTION_APPLICANT_PROPERTY)
-    if not p:
-        return "-"
+    if not p: return "-"
     people = p.get("people", [])
     names = [person.get("name") or person.get("person", {}).get("email", "") for person in people]
     return ", ".join(filter(None, names)) or "-"
 
-
-def build_page_url(page_id: str) -> str:
-    clean_id = page_id.replace("-", "")
-    return f"https://www.notion.so/{clean_id}"
-
-
 def build_database_url() -> str:
-    """返回数据库主页 URL（默认视图）"""
     return f"https://www.notion.so/213756632df1800b870def0eb8ed4318?v=213756632df180aa87b5000ca6013019"
 
-
 def mark_as_notified(page_id: str):
-    """把 Notified (checkbox) 勾上 True"""
-    # ✅ 必须带上 page_id
     url = f"{NOTION_PAGE_URL}/{page_id}"
-    payload = {
-        "properties": {
-            NOTION_NOTIFIED_PROPERTY: {
-                "checkbox": True
-            }
-        }
-    }
+    payload = {"properties": {NOTION_NOTIFIED_PROPERTY: {"checkbox": True}}}
     resp = requests.patch(url, headers=NOTION_HEADERS, json=payload)
-    # 方便排错，你也可以打印一下 resp.text
-    # print(resp.status_code, resp.text)
     resp.raise_for_status()
 
-
 # ============================
-#          Slack 部分
+#  3. 通知逻辑部分 (Slack & Email)
 # ============================
 def send_slack_message(text: str, url: str):
-    """发送带一个按钮的消息，按钮打开数据库主页"""
     payload = {
         "channel": SLACK_USER_ID,
         "text": text,
         "blocks": [
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": text}
-            },
+            {"type": "section", "text": {"type": "mrkdwn", "text": text}},
             {
                 "type": "actions",
                 "elements": [
@@ -181,59 +137,78 @@ def send_slack_message(text: str, url: str):
         ]
     }
     resp = requests.post(SLACK_API_URL, headers=SLACK_HEADERS, json=payload)
-    # print(resp.status_code, resp.text)  # 调试时可以打开
     resp.raise_for_status()
 
+def send_email_notification(subject: str, content: str):
+    """通过 SMTP 服务发送邮件"""
+    msg = MIMEText(content, 'plain', 'utf-8')
+    msg['From'] = EMAIL_SENDER
+    msg['To'] = EMAIL_RECEIVER
+    msg['Subject'] = Header(subject, 'utf-8')
+
+    try:
+        # 使用 TLS 加密连接
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls() 
+        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+        server.sendmail(EMAIL_SENDER, [EMAIL_RECEIVER], msg.as_string())
+        server.quit()
+        print(f"[SUCCESS] 邮件已发送至: {EMAIL_RECEIVER}")
+    except Exception as e:
+        print(f"[ERROR] 邮件发送失败: {str(e)}")
 
 # ============================
-#             主程序
+#  4. 主程序
 # ============================
 def main():
-    print(f"[INFO] 拉取数据库全部页面...")
+    print(f"[INFO] 正在拉取 Notion 数据库...")
     all_pages = fetch_all_pages()
-    print(f"[INFO] 总记录数: {len(all_pages)}")
+    
+    # 筛选待通知的项目
+    pending_pages = [
+        p for p in all_pages 
+        if get_status_name(p) == NOTION_STATUS_TARGET and not get_notified_flag(p)
+    ]
 
-    pages = []
-    for page in all_pages:
-        if get_status_name(page) == NOTION_STATUS_TARGET and not get_notified_flag(page):
-            pages.append(page)
-
-    print(f"[INFO] 符合条件( Status='{NOTION_STATUS_TARGET}', Notified=false ) 的记录数: {len(pages)}")
-    if not pages:
-        print("[INFO] 没有需要通知的项目。")
+    if not pending_pages:
+        print("[INFO] 没有需要通知的新项目。")
         return
 
-    db_url = build_database_url()  # ✅ 用数据库主页链接
+    db_url = build_database_url()
 
-    for page in pages:
+    for page in pending_pages:
         page_id = page["id"]
-
         title = extract_title(page)
         quantity = extract_quantity(page)
         applicant = extract_applicant(page)
         expected_price = extract_expected_price(page)
         description = extract_description(page)
-        # page_url = build_page_url(page_id)  # 如果以后需要单条链接，可以用这个
 
-        message = (
+        # 构建统一的消息文本
+        message_body = (
             f"👋 Dear Prof. Matsuzaka,\n"
-            f"📦 You received an order request from {applicant}.\n\n"
+            f"📦 You received a new order request from {applicant}.\n\n"
             f"- Product: {title}\n"
             f"- Quantity: {quantity}\n"
             f"- Expected Price: ￥{expected_price}\n"
         )
         if description:
-            message += f"- Notes: {description}\n"
+            message_body += f"- Notes: {description}\n"
+        
+        # 1. 发送 Slack
+        print(f"[INFO] 正在通知 Slack: {title}")
+        send_slack_message(message_body, db_url)
 
-        print(f"[INFO] 发送 Slack 消息: {title}")
-        # ✅ 按钮打开数据库主页
-        send_slack_message(message, db_url)
+        # 2. 发送 邮件
+        print(f"[INFO] 正在通知 邮件: {title}")
+        email_title = f"Order Request Notification: {title}"
+        send_email_notification(email_title, message_body)
 
-        print(f"[INFO] 标记 Notified=True: {page_id}")
+        # 3. 回写 Notion
+        print(f"[INFO] 正在标记 Notion 状态...")
         mark_as_notified(page_id)
 
-    print("[INFO] 所有需要通知的项目已处理完毕。")
-
+    print("[INFO] 所有任务处理完毕。")
 
 if __name__ == "__main__":
     main()
